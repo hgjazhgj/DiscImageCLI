@@ -1,0 +1,12 @@
+{
+  "total_sectors": 2297888,
+  "inner_radius_mm": 23.966240074096643,
+  "outer_radius_mm": 57.95448936129535,
+  "channel_bit_nm": 133.3,
+  "start_angle_deg": 0.0,
+  "direction": "cw",
+  "pitch_linear": -5.116119772674893e-05,
+  "pitch_quadratic": 7.288259315376144e-05,
+  "pitch_cubic": -3.533283575483746e-05,
+  "psn_offset": "0x30000"
+}
