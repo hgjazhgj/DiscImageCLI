@@ -5,7 +5,7 @@
 # Python port and command-line implementation: 2026-11-07. See NOTICE.md.
 """Generate a DVD drawing ISO or an 8192-square drawable-area PNG mask.
 
-The ISO contains 2048-byte user sectors, optionally with ISO9660/Joliet files.
+The ISO contains 2048-byte user sectors, optionally with UDF 2.01 files.
 This program operates on local files only. A native sampler computes bounded batches of
 codeword positions; a full-disc channel stream is never allocated.
 """
@@ -30,7 +30,7 @@ import numpy as np
 from PIL import Image
 
 from dvd_geometry import DvdGeometry
-from dvd_kernel import generate_payload as _generate_payload
+from dvd_kernel import generate_payload as _generate_payload, generate_color_payload as _generate_color_payload
 
 SECTOR_BYTES = 2048
 SECTORS_PER_BLOCK = 16
@@ -99,29 +99,37 @@ def scrambler_masks() -> np.ndarray:
     return masks
 
 
-def load_binary_png(path: str | Path) -> np.ndarray:
-    """Convert PNG to 8-bit luminance, ignore alpha, and keep only bit 7.
+def load_png(path: str | Path) -> np.ndarray:
+    """Route grayscale PNG modes to gray8 and color PNG modes to RGB8.
 
-    Returns a read-only 0/255 array for the existing physical sampler. Pillow's
-    L conversion uses 0.299 R + 0.587 G + 0.114 B for RGB inputs. No background
-    compositing, resizing, or dithering takes place.
+    Returns a read-only contiguous array. Palette colors are expanded and alpha
+    is ignored. The image format, not its pixel values, selects the algorithm.
     """
     with Image.open(path) as image:
         image.info.pop("transparency", None)
-        gray = image.convert("L")
-    result = np.array(gray)
-    gray.close()
-    result >>= 7
-    result *= 255
+        gray_mode = image.mode in ("1", "L", "LA", "I", "F") or image.mode.startswith("I;16")
+        raster = image.convert("L" if gray_mode else "RGB")
+    result = np.array(raster)
+    raster.close()
     result.flags.writeable = False
     return result
 
 
 def generate_payload(image: np.ndarray, options: DvdOptions, geometry: DvdGeometry,
-                     start_block: int, block_count: int) -> bytes:
+                     start_block: int, block_count: int, *, dither_strength: float = 0.75,
+                     binary_image: bool | None = None, color_rotation: float | None = None) -> bytes:
     """Generate complete ECC blocks of cooked user data; safe for concurrent calls."""
+    if image.ndim == 3:
+        from dvd_color import load_color_profile, plan_viewing_angle
+        profile = load_color_profile()
+        if color_rotation is None:
+            color_rotation = plan_viewing_angle(image, options, profile=profile)
+        return _generate_color_payload(image, options, geometry, start_block, block_count,
+                                       payload_channel_centers(), scrambler_masks(), profile, color_rotation)
+    if binary_image is None:
+        binary_image = not np.any((image != 0) & (image != 255))
     return _generate_payload(image, options, geometry, start_block, block_count,
-                             payload_channel_centers(), scrambler_masks())
+                             payload_channel_centers(), scrambler_masks(), binary_image, dither_strength)
 
 
 def generate_mask(output_path: str | Path, options: DvdOptions, *,
@@ -129,7 +137,7 @@ def generate_mask(output_path: str | Path, options: DvdOptions, *,
     """Write a binary annulus using the ISO layout's drawable LBA interval."""
     start, end = 0, options.total_sectors
     if data_dir is not None:
-        from iso9660 import plan_directory
+        from udf import plan_directory
         layout = plan_directory(Path(data_dir).absolute(), options.total_sectors, file_position)
         start, end = layout.drawing_start_lba, layout.drawing_end_lba
     geometry = DvdGeometry(options.inner_radius_mm, options.outer_radius_mm, options.track_length_mm,
@@ -149,14 +157,17 @@ def generate_mask(output_path: str | Path, options: DvdOptions, *,
 
 def _metadata(input_path: Path, output_path: Path, options: DvdOptions,
               geometry: DvdGeometry, elapsed: float, layout=None,
-              config_path: Path | None = None) -> dict:
+              config_path: Path | None = None, dither_strength: float = 0.75,
+              color_rotation: float | None = None) -> dict:
     pitch_um = geometry.track_pitch_mm * 1000
-    return {
+    metadata = {
         "format": "dvd-nrzi-disc-fill-v2",
-        "generator": "DiscImageBurn Python 1.4",
+        "generator": "DiscImageBurn Python 1.7",
         "sourceImage": str(input_path), "isoOutput": str(output_path),
         "imagePreprocessing": {"grayscale": "Pillow L (0.299R+0.587G+0.114B)",
-                               "alpha": "ignored", "operation": "(gray8 >> 7) * 255"},
+                               "alpha": "ignored", "operation": "preserve-gray8",
+                               "sampling": "nearest-if-binary-otherwise-bilinear",
+                               "quantization": "per-payload-byte-dither"},
         "configPath": str(config_path) if config_path else None,
         "startLba": layout.drawing_start_lba if layout else 0,
         "fillSectors": layout.drawing_end_lba - layout.drawing_start_lba if layout else options.total_sectors,
@@ -171,7 +182,9 @@ def _metadata(input_path: Path, output_path: Path, options: DvdOptions,
             "startAngleDegrees": options.start_angle_deg, "clockwise": options.direction == "cw",
             "luminanceThreshold": 128, "alphaThreshold": 1, "sampleEveryChannelBits": 1,
             "pitchLinear": options.pitch_linear, "pitchQuadratic": options.pitch_quadratic,
-            "pitchCubic": options.pitch_cubic, "tone": None,
+            "pitchCubic": options.pitch_cubic,
+            "tone": {"ditherStrength": dither_strength, "levels": 2,
+                     "brightness": 0, "srgbLinearization": False},
         },
         "pitchPolynomial": {
             "variable": "x=(radiusMm-innerRadiusMm)/(outerRadiusMm-innerRadiusMm)",
@@ -180,9 +193,11 @@ def _metadata(input_path: Path, output_path: Path, options: DvdOptions,
             "quadratic": pitch_um * options.pitch_quadratic,
             "cubic": pitch_um * options.pitch_cubic,
         },
-        "iso": {"mode": "hybrid-iso9660-joliet" if layout else "raw-sector-image",
+        "iso": {"mode": "udf-2.01" if layout else "raw-sector-image",
                 "logicalSectorBytes": SECTOR_BYTES,
                 "imageSectors": options.total_sectors, "mountableFilesystem": layout is not None,
+                "volumeLabel": layout.volume_label if layout else None,
+                "udfTimestamp": layout.timestamp.isoformat() if layout else None,
                 "hybrid": {
                     "sourceDirectory": str(layout.source_directory),
                     "fileCount": layout.file_count, "directoryCount": layout.directory_count,
@@ -191,12 +206,28 @@ def _metadata(input_path: Path, output_path: Path, options: DvdOptions,
                     "dataEndLbaExclusive": layout.data_end_lba,
                     "drawingStartLba": layout.drawing_start_lba,
                     "drawingEndLbaExclusive": layout.drawing_end_lba,
+                    "partitionStartLba": layout.partition_start_lba,
+                    "partitionSectors": layout.partition_sectors,
+                    "backupMetadataStartLba": layout.total_sectors - 257,
                 } if layout else None},
     }
+    if color_rotation is not None:
+        from dvd_color import load_color_profile
+        profile = load_color_profile()
+        metadata["imagePreprocessing"] = {"color": "RGB8", "alpha": "ignored",
+                                           "operation": "preserve-rgb", "sampling": "floor-nearest",
+                                           "quantization": "angle-dependent-texture-mixture"}
+        metadata["imageMapping"]["tone"] = None
+        metadata["colorMapping"] = {"profile": "continuous-color-map.json",
+                                     "viewingRotationDegrees": color_rotation,
+                                     "modelStartDegrees": profile.model_start_deg,
+                                     "modelEndDegrees": profile.model_end_deg,
+                                     "bandingReduction": 1, "adaptiveMixing": 1, "preferDisDark": False}
+    return metadata
 
 
 def generate_iso(input_path: str | Path, output_path: str | Path, options: DvdOptions, *,
-                 workers: int | None = None, batch_blocks: int = 8,
+                 dither_strength: float = 0.75, workers: int | None = None, batch_blocks: int = 8,
                  progress: Callable[[int, int, float], None] | None = None,
                  data_dir: str | Path | None = None, file_position: str = "inner",
                  volume_label: str = "DVD_IMAGE", config_path: str | Path | None = None) -> dict:
@@ -207,9 +238,17 @@ def generate_iso(input_path: str | Path, output_path: str | Path, options: DvdOp
     configuration = Path(config_path).absolute() if config_path is not None else None
     layout = None
     if data_dir is not None:
-        from iso9660 import plan_directory
+        from udf import plan_directory
         layout = plan_directory(Path(data_dir).absolute(), options.total_sectors, file_position, volume_label)
-    image = load_binary_png(source)
+    image = load_png(source)
+    color_rotation = None
+    if image.ndim == 3:
+        from dvd_color import plan_viewing_angle
+        color_rotation = plan_viewing_angle(image, options, layout)
+        print(f"观看角度: {color_rotation:.1f}°", file=sys.stderr, flush=True)
+        binary_image = False
+    else:
+        binary_image = not np.any((image != 0) & (image != 255))
     expected_bytes = options.total_sectors * SECTOR_BYTES
     geometry = DvdGeometry(options.inner_radius_mm, options.outer_radius_mm, options.track_length_mm,
                            options.pitch_linear, options.pitch_quadratic, options.pitch_cubic)
@@ -234,7 +273,9 @@ def generate_iso(input_path: str | Path, output_path: str | Path, options: DvdOp
             if progress and drawing_start:
                 progress(drawing_start, options.total_sectors, time.monotonic() - started)
             while batch := list(islice(jobs, workers * 2)):
-                futures = [executor.submit(generate_payload, image, options, geometry, start, count)
+                futures = [executor.submit(generate_payload, image, options, geometry, start, count,
+                                           dither_strength=dither_strength, binary_image=binary_image,
+                                           color_rotation=color_rotation)
                            for start, count in batch]
                 for future in futures:
                     stream.write(future.result())
@@ -249,7 +290,7 @@ def generate_iso(input_path: str | Path, output_path: str | Path, options: DvdOp
             stream.flush()
             os.fsync(stream.fileno())
         metadata = _metadata(source, output, options, geometry, time.monotonic() - started,
-                             layout, configuration)
+                             layout, configuration, dither_strength, color_rotation)
         fd, temp_name = tempfile.mkstemp(prefix=f".{sidecar.name}.", suffix=".partial", dir=output.parent)
         temp_json = Path(temp_name)
         temp_paths.append(temp_json)
@@ -272,13 +313,23 @@ def main(argv: list[str] | None = None) -> int:
         description="生成 DVD 盘面绘图 ISO，或 8192x8192 可绘区域 PNG 蒙版。",
         epilog="容量和校准参数全部来自 JSON 配置文件；只处理本地文件，不访问设备。",
     )
-    parser.add_argument("-i", "--input", type=Path, help="输入 PNG（生成 ISO 时必填）")
-    parser.add_argument("-o", "--output", type=Path, help="输出 .iso 镜像或 .png 蒙版（必填）")
-    parser.add_argument("-c", "--config", type=Path, help="盘片容量及物理校准参数 JSON（必填）")
-    parser.add_argument("--data-dir", type=Path, help="递归加入 ISO 的本地目录，可省略")
-    parser.add_argument("--file-position", default="inner",
+    input_argument = parser.add_argument("-i", "--input", type=Path, help="输入 PNG，用于生成 ISO")
+    parser.add_argument("-o", "--output", type=Path, required=True, help="输出 .iso 镜像或 .png 蒙版")
+    parser.add_argument("-c", "--config", type=Path, required=True, help="盘片容量及物理校准参数 JSON")
+    parser.add_argument("-f", "--files", type=Path, help="递归加入 ISO 的本地目录")
+    parser.add_argument("-p", "--position", default="inner",
                         help="随盘文件位置：inner 内圈，outer 外圈")
+    parser.add_argument("-l", "--volume-label", default="DVD_IMAGE",
+                        help="ISO 卷标，默认 DVD_IMAGE（配合 --files 使用）")
+    parser.add_argument("-d", "--dither-strength", type=float, default=0.75,
+                        help="灰度 ISO 抖动强度，0–1，默认 0.75；0 关闭抖动，RGB 彩色不使用")
+    parser.add_argument("-j", "--jobs", type=int,
+                        help="ISO 并行线程数，1–64；默认按逻辑 CPU 数选择，最多 64")
     args = parser.parse_args(argv)
+    if args.output.suffix.lower() == ".iso":
+        # Enforce the input requirement after determining the output mode.
+        input_argument.required = True
+        args = parser.parse_args(argv)
     last_report = -math.inf
 
     def report(done: int, total: int, elapsed: float) -> None:
@@ -294,12 +345,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         options = load_disc_config(args.config)
         if args.output.suffix.lower() == ".png":
-            generate_mask(args.output, options, data_dir=args.data_dir, file_position=args.file_position)
+            generate_mask(args.output, options, data_dir=args.files, file_position=args.position)
             print(f"完成: {args.output.absolute()}（8192x8192 黑白蒙版）", file=sys.stderr)
             return 0
         metadata = generate_iso(args.input, args.output, options, progress=report,
-                                data_dir=args.data_dir, file_position=args.file_position,
-                                config_path=args.config)
+                                workers=args.jobs,
+                                data_dir=args.files, file_position=args.position,
+                                volume_label=args.volume_label,
+                                config_path=args.config, dither_strength=args.dither_strength)
     except KeyboardInterrupt:
         print("\n已取消，临时文件已清理。", file=sys.stderr)
         return 130

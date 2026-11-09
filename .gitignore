@@ -1,0 +1,55 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Virtual environments and packaging output
+.venv/
+venv/
+env/
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Test coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Native compilation intermediates (keep the bundled dvd_kernel.dll)
+*.o
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.ipdb
+*.iobj
+*.exp
+
+# Generated disc images and their parameter sidecars
+*.iso
+*.iso.json
+
+# Temporary files, backups, and logs
+*.partial
+*.tmp
+*.temp
+*.bak
+*.log
+*.swp
+*.swo
+*~
+
+# Local IDE and operating system files
+.vs/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini
