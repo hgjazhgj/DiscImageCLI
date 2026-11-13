@@ -199,7 +199,7 @@ def load_color_profile() -> ColorProfile:
                         data["modelStartDeg"], data["modelEndDeg"], nodes, data["ditherSeed"], data)
 
 
-def plan_viewing_angle(rgb, options, layout=None, profile=None) -> float:
+def plan_viewing_angle(rgb, options, layout=None, profile=None, *, output_sectors=None) -> float:
     """Choose one image's rotation using the source coverage/weighted-error score.
 
     The input is already a disc-centred raster, so CenterAlpha is zero and its
@@ -209,8 +209,9 @@ def plan_viewing_angle(rgb, options, layout=None, profile=None) -> float:
     profile = profile or load_color_profile()
     geometry = DvdGeometry(options.inner_radius_mm, options.outer_radius_mm, options.track_length_mm,
                            options.pitch_linear, options.pitch_quadratic, options.pitch_cubic)
+    output_sectors = options.total_sectors if output_sectors is None else output_sectors
     start, end = ((layout.drawing_start_lba, layout.drawing_end_lba)
-                  if layout else (0, options.total_sectors))
+                  if layout else (0, output_sectors))
     radii = geometry.positions(np.array([start, end]) * 38688.0 * (options.channel_bit_nm * 1e-6))[0]
     step = math.ceil(768 / 20)
     axis = (np.arange(step // 2, 768, step) + .5) * (2 * options.outer_radius_mm / 768) - options.outer_radius_mm
@@ -219,8 +220,9 @@ def plan_viewing_angle(rgb, options, layout=None, profile=None) -> float:
     x, y = x[inside], y[inside]
     height, width = rgb.shape[:2]
     scale = (min(width, height) - 1) / (2 * options.outer_radius_mm)
-    ix = np.clip(np.floor((width - 1) / 2 + x * scale + .5).astype(np.intp), 0, width - 1)
-    iy = np.clip(np.floor((height - 1) / 2 + y * scale + .5).astype(np.intp), 0, height - 1)
+    # Use the same floor sampler as the native RGB encoder.
+    ix = np.clip(np.floor((width - 1) / 2 + x * scale).astype(np.intp), 0, width - 1)
+    iy = np.clip(np.floor((height - 1) / 2 + y * scale).astype(np.intp), 0, height - 1)
     colors = rgb[iy, ix]
     delta = (np.arctan2(y, x) * 180 / math.pi + 540) % 360 - 180
     targets = profile.target(colors)

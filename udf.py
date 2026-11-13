@@ -399,8 +399,6 @@ class UdfLayout:
 def plan_directory(source_directory: str | Path, total_sectors: int, files_position: str = "inner",
                    volume_label: str = "DVD_IMAGE", *, timestamp: datetime | None = None) -> UdfLayout:
     """Reserve UDF metadata, a physical file partition and an aligned DVD drawing range."""
-    if total_sectors < 640 or total_sectors % 16:
-        raise ValueError("UDF drawing volumes need at least 640 sectors and a multiple of 16 sectors.")
     source = Path(os.path.abspath(source_directory))
     nodes = _read_tree(source)
     cursor = _FIRST_PARTITION_LBA + 2
