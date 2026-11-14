@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="210mm" height="297mm" viewBox="0 0 210 297"
+     role="img" aria-labelledby="title description">
+  <rect id="a4-paper" x="0" y="0" width="210" height="297"
+        fill="#000"/>
+  <g id="disc" >
+    <circle id="disc-outer" cx="74.93" cy="67.451111111111" r="60.466111111111" fill="#777"/>
+    <circle id="print-outer" cx="74.93" cy="67.451111111111" r="58" fill="#fff"/>
+    <circle id="print-inner" cx="74.93" cy="67.451111111111" r="12.5" fill="#777"/>
+    <circle id="disc-inner" cx="74.93" cy="67.451111111111" r="7.972777777778" fill="#000"/>
+  </g>
+  <g id="centre-crosshair" fill="none" stroke="#0f0" >
+    <line id="vertical-centreline" x1="74.93" y1="62.451111111111" x2="74.93" y2="72.451111111111"/>
+    <line id="horizontal-centreline" x1="69.93" y1="67.451111111111" x2="79.93" y2="67.451111111111"/>
+  </g>
+</svg>
