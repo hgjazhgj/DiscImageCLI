@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (c) 2026 Disc Image Studio contributors.
-# Python/NumPy port of DiscImageStudio.Core/DvdTrackGeometry.cs, modified 2026-11-07.
-"""Physical DVD spiral coordinates, compatible with Disc Image Studio.
+"""Physical DVD spiral coordinates.
 
 The local radial growth is b * (1 + c1*x + c2*x**2 + c3*x**3), where
 x = (radius - inner_radius) / (outer_radius - inner_radius).  The scale b is
-solved from the total physical track length.  Constant pitch keeps the source
-implementation's one-step Newton inverse; varying pitch uses adaptive Gaussian
+solved from the total physical track length.  Constant pitch uses a one-step
+Newton inverse; varying pitch uses adaptive Gaussian
 quadrature and a piecewise cubic Hermite inverse.  All distances are millimetres.
 """
 
@@ -293,7 +292,7 @@ class DvdGeometry:
 
     @staticmethod
     def _hypot(first: float, second: float) -> float:
-        # Keep the source's operation order instead of math.hypot's different rounding.
+        # Keep the explicit operation order; math.hypot rounds differently.
         first, second = abs(first), abs(second)
         maximum = max(first, second)
         if maximum == 0:

@@ -1,6 +1,5 @@
 """Sequential UDF 2.01 filesystem planning for DVD picture images.
 
-Ported from Disc Image Studio's UdfImageWriter.cs.
 Copyright (c) 2026 Disc Image Studio contributors.
 SPDX-License-Identifier: GPL-3.0-or-later
 """
@@ -122,25 +121,6 @@ class _Node:
     entry_lba: int = 0
     data_lba: int = 0
     data_bytes: int = 0
-
-
-def _read_tree(source: Path) -> list[_Node]:
-    def node(path: Path, parent: _Node | None, unique_id: int) -> _Node:
-        info = path.stat()
-        directory = stat.S_ISDIR(info.st_mode)
-        return _Node(path, directory, datetime.fromtimestamp(info.st_mtime, timezone.utc),
-                     parent, identifier=_identifier(path.name) if parent else b"",
-                     unique_id=unique_id, data_bytes=0 if directory else info.st_size)
-
-    nodes = [node(source, None, 0)]
-    # Appending during traversal preserves the upstream breadth-first allocation order.
-    for directory in nodes:
-        if directory.directory:
-            for path in sorted(directory.path.iterdir(), key=lambda item: item.name):
-                child = node(path, directory, len(nodes) + 15)
-                directory.children.append(child)
-                nodes.append(child)
-    return nodes
 
 
 class _SequentialWriter:
@@ -400,7 +380,22 @@ def plan_directory(source_directory: str | Path, total_sectors: int, files_posit
                    volume_label: str = "DVD_IMAGE", *, timestamp: datetime | None = None) -> UdfLayout:
     """Reserve UDF metadata, a physical file partition and an aligned DVD drawing range."""
     source = Path(os.path.abspath(source_directory))
-    nodes = _read_tree(source)
+
+    def make_node(path: Path, parent: _Node | None, unique_id: int) -> _Node:
+        info = path.stat()
+        directory = stat.S_ISDIR(info.st_mode)
+        return _Node(path, directory, datetime.fromtimestamp(info.st_mtime, timezone.utc),
+                     parent, identifier=_identifier(path.name) if parent else b"",
+                     unique_id=unique_id, data_bytes=0 if directory else info.st_size)
+
+    nodes = [make_node(source, None, 0)]
+    # Appending during traversal preserves breadth-first allocation order.
+    for directory in nodes:
+        if directory.directory:
+            for path in sorted(directory.path.iterdir(), key=lambda item: item.name):
+                child = make_node(path, directory, len(nodes) + 15)
+                directory.children.append(child)
+                nodes.append(child)
     cursor = _FIRST_PARTITION_LBA + 2
     for node in nodes:
         node.entry_lba = cursor
