@@ -52,7 +52,7 @@ def generate_iso(input_path: str | Path | Sequence[str | Path], output_path: str
                  data_dir: str | Path | None = None, file_position: str = "inner",
                  volume_label: str = "DVD_IMAGE",
                  read_compatibility: bool = False, bleed: float = 1.0, viewing: dict | None = None,
-                 color_range: str | None = None) -> dict:
+                 color_range: str | None = None, no_gain: bool = False) -> dict:
     """Generate carrier drawings and optional UDF files as an ISO image."""
     workers = workers or min(64, os.cpu_count() or 1)
     sources = [input_path] if isinstance(input_path, (str, Path)) else list(input_path)
@@ -65,7 +65,7 @@ def generate_iso(input_path: str | Path | Sequence[str | Path], output_path: str
     profile = prepare_multiview(sources, viewing=viewing,
                                 channel_bit_nm=options.channel_bit_nm,
                                 radii_mm=(options.inner_radius_mm, options.outer_radius_mm),
-                                color_range=color_range)
+                                color_range=color_range, no_gain=no_gain)
     print("输入模式: " + " / ".join({"color": "彩色", "grayscale": "灰度", "monochrome": "黑白"}[mode]
                                      for mode in profile.source_modes),
           file=sys.stderr, flush=True)
@@ -120,6 +120,7 @@ def generate_iso(input_path: str | Path | Sequence[str | Path], output_path: str
             "trackPitchUm": plan.geometry.track_pitch_mm * 1000,
             "bleed": plan.bleed,
             "readCompatibility": read_compatibility,
+            "noGain": no_gain,
             "images": [{"path": path, "mode": mode}
                        for path, mode in zip(profile.source_paths, profile.source_modes)],
             "carriers": [
@@ -204,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="ISO 并行线程数，1–64；默认按 CPU 选择，最多 64；蒙版忽略")
     parser.add_argument("--read-compatibility", action="store_true",
                         help="ISO 绘图统一替换规则：每 16 字节按规则替换为 9B；蒙版忽略")
+    parser.add_argument("--no-gain", action="store_true",
+                        help="所有灰度和彩色载波增益固定为 1，保持原圈份额和排程；蒙版忽略")
     parser.add_argument("--viewing", type=Path,
                         help="观看 JSON：灯/眼位置、姿态或 target_u；周期补偿默认关闭，chirp:true 可开启；蒙版忽略")
     parser.add_argument("--color-range", choices=("standard", "wide"),
@@ -241,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                                 data_dir=args.files, file_position=args.position,
                                 volume_label=args.volume_label,
                                 read_compatibility=args.read_compatibility, bleed=args.bleed, viewing=viewing,
-                                color_range=args.color_range)
+                                color_range=args.color_range, no_gain=args.no_gain)
     except KeyboardInterrupt:
         print("\n已取消，临时文件已清理。", file=sys.stderr)
         return 130

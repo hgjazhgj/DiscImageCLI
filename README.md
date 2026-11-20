@@ -7,6 +7,7 @@
 
 程序使用统一的轨道定位与载波编码流程。灰度保留原始灰度比例，彩色保留 R、G、B 三个通道；
 采样后按载波的圈排程、亮度增益和门限生成字节，再补偿 DVD 扰码。
+`--no-gain` 可将所有灰度和彩色载波的增益固定为 1，默认仍使用各方案计算的增益。
 位置周期补偿默认关闭；需要时在观看 JSON 中明确设置 `"chirp": true`。
 程序只读本地图片、配置和随盘文件，输出 ISO 及参数 JSON，或 PNG 蒙版。
 不联网、不查询或打开光驱、不读取盘片容量、不执行刻录。
@@ -103,6 +104,7 @@ PNG 始终映射到配置的完整数据区外径，蒙版显示实际剩余可�
 | `-j` / `--jobs` | ISO 并行线程数，1–64；默认按逻辑 CPU 数选择，最多 64；蒙版忽略 |
 | `--viewing` | 自定义观看参数 JSON 路径；按参考点、灯/眼位置和视图姿态计算载波，或直接指定 `target_u`；合并时按光学三元组指定；蒙版忽略 |
 | `--color-range standard/wide` | 不指定时不合并；指定时必须提供 `standard` 或 `wide`：标准合并六载波、1–6 张，加宽合并九载波、1–9 张；蒙版忽略 |
+| `--no-gain` | 默认关闭；指定后所有灰度及 RGB 载波增益均为 1，保留原圈份额和排程；蒙版忽略 |
 | `--read-compatibility` | 实验性读取保护，默认关闭；应用于所有 ISO 绘图模式；PNG 蒙版忽略 |
 
 完整帮助：`python dvd_image.py --help`。
@@ -144,7 +146,7 @@ RGB 图中局部灰色区域也使用 RGB 重建。透明度直接忽略，不�
 
 ### 载波、亮度增益与按圈编码
 
-未启用通道合并且未指定 `--viewing` 时，使用以下默认名义载波与增益，字符串方案保持固定名义周期；
+未启用通道合并且未指定 `--viewing`、`--no-gain` 时，使用以下默认名义载波与增益，字符串方案保持固定名义周期；
 默认单张、两张全灰度使用的 `92/B9` 单字节载波保持固定周期。全灰度输入的名义载波与增益为：
 
 - 单张灰度图使用 `0x92`，占用全部轨道；按 `min(periods)/period_i` 计算，增益自然为 1。
@@ -160,6 +162,16 @@ RGB 图中局部灰色区域也使用 RGB 重建。透明度直接忽略，不�
 `whiteNeed / 实际圈份额` 求增益，并以各平面的最大值归一化。
 灰度平面仍使用 `(g/255) × gain`；彩色平面使用各自的线性 RGB 通道乘增益。
 `u` 表示光源和观察方向在轨道切线上的分量，不是以度为单位的倾角；载波以 133.3 nm 通道位长度为参考。
+
+指定 `--no-gain` 后，所有载波的实际 `gain` 统一为 1，适用于默认方案、标准／加宽通道合并、
+自定义观看及周期补偿。灰度点亮目标改为 `g/255`，彩色点亮目标为线性化后的对应 RGB 通道值。
+原有采样、RGB 线性化、载波周期、圈数和交错排程均保持原规则；彩色的白平衡圈份额仍保留，只取消剩余增益补偿，因而颜色和亮度可能变化。
+这个开关不会把多图分走的圈位交回单张图片，也不使多图恢复单图的全圈亮度。
+例如，两张默认灰度图仍使用各半圈位的 `92/B9`，但两者增益从 `2/3、1` 改为 `1、1`：
+
+```powershell
+python dvd_image.py -c CMDR47G-CFMWM03-6865G.json -i "D:\temp\g1.png" "D:\temp\g2.png" -o "D:\temp\g-no-gain.iso" --no-gain
+```
 
 各载波用自己的圈序号进行 **32 级位反转门限与基于原始像素的 4×4 有序抖动**。
 字节串在同步帧处重新开始，占用必要的段首填充位置并裁剪尾部，然后补偿 DVD 扰码。
@@ -352,6 +364,7 @@ lamp = p + 1000 × d
 | `trackPitchUm` | 求解得到的轨距常数项，单位 µm |
 | `images` | 按输入顺序记录路径及 `monochrome`（1 位黑白）、`grayscale`（灰度）或 `color`（彩色）模式 |
 | `channelMerge` | 通道合并布尔值，由是否指定 `color_range` 派生 |
+| `noGain` | 是否将所有载波增益固定为 1；`carriers[].gain` 记录实际使用的增益 |
 | `colorRange` | 仅启用通道合并时记录实际选择的 `standard` 或 `wide` |
 | `carriers` | 每个载波的 `image`、`channel`、`periodT`、`gain`、`turnCount`、`sampling`；`image` 始终是实际源图的零基索引，合并时另有零基光学视图编号 `view`。自定义及宽合并模式还记录 `requestedPeriodT`；它是名义请求周期，`periodT` 是名义串实际光谱主峰的周期，均以通道位长度 T 为单位。补偿方案还记录 `variantCount` 和 `requestedVariantPeriodTRange` |
 | `targetU` | 默认按输入顺序记录目标观看分量，合并时按两个或三个光学视图排列；默认方案按当前通道位长度换算，自定义方案记录几何计算或直接指定的实际 `u` |
@@ -460,8 +473,9 @@ outer：盘首元数据 → 对齐填充 → 绘图 → 目录与文件 → 盘�
 - `generate_iso` 接受单个图片路径或路径序列，使用统一的载波编码流程。
 - `generate_iso` 可用关键字 `viewing=None` 传入已读取的观看参数对象；`None` 使用默认载波方案。命令行 `--viewing` 接受 JSON 文件路径。
 - `generate_iso`、两个 profile 准备接口省略 `color_range` 时不合并；显式传入 `"standard"` 启用标准合并并固定六平面，`"wide"` 启用加宽合并并固定九平面。默认值 `None` 仅表示未提供范围。返回的 `profile.channel_merge` 记录由范围派生的合并状态。
-- `dvd_multiview.prepare_multiview(paths, viewing=None, channel_bit_nm=133.3, radii_mm=(24,58), color_range=None)` 接受路径序列：未合并 1–8 个、标准合并 1–6 个、加宽合并 1–9 个；`paths` 以外为关键字参数。
-- 已有数组可用 `dvd_multiview.prepare_images(images, source_paths=None, viewing=None, channel_bit_nm=133.3, radii_mm=(24,58), color_range=None)` 准备 profile，`images` 以外均为关键字参数。`images` 数量遵循相同的三种范围约定，每项为 C 连续布局的 `(8192, 8192)` `bool` 黑白、`(8192, 8192)` `uint8` 灰度或 `(8192, 8192, 3)` `uint8` RGB；可选路径序列与图片数一致。二维 `bool` 选择最近邻并展开为 0/255；二维 `uint8` 灰度和三维 `uint8` RGB 各通道均选择双线性，即使灰度像素仅为 0/255。数组不按像素内容分类，也不接受二值标记覆盖。
+- `generate_iso` 和两个 profile 准备接口均接受 `no_gain=False`；设为 `True` 后，`profile.gains` 及亮度查表使用的增益全部为 1，原有圈份额和载波准备不变。
+- `dvd_multiview.prepare_multiview(paths, viewing=None, channel_bit_nm=133.3, radii_mm=(24,58), color_range=None, no_gain=False)` 接受路径序列：未合并 1–8 个、标准合并 1–6 个、加宽合并 1–9 个；`paths` 以外为关键字参数。
+- 已有数组可用 `dvd_multiview.prepare_images(images, source_paths=None, viewing=None, channel_bit_nm=133.3, radii_mm=(24,58), color_range=None, no_gain=False)` 准备 profile，`images` 以外均为关键字参数。`images` 数量遵循相同的三种范围约定，每项为 C 连续布局的 `(8192, 8192)` `bool` 黑白、`(8192, 8192)` `uint8` 灰度或 `(8192, 8192, 3)` `uint8` RGB；可选路径序列与图片数一致。二维 `bool` 选择最近邻并展开为 0/255；二维 `uint8` 灰度和三维 `uint8` RGB 各通道均选择双线性，即使灰度像素仅为 0/255。数组不按像素内容分类，也不接受二值标记覆盖。
 - 准备 profile 使用的 `channel_bit_nm`、`radii_mm=(inner_radius_mm, outer_radius_mm)` 与后续 `PreparedKernel` 的盘片配置一致；`generate_iso` 自动传入实际盘片半径。
 - `prepare_images` 与文件序列入口共用同一个 profile 构建流程；未合并的单张 `uint8` 灰度对原数组建立视图，不复制整张图片。`bool` 黑白数组需展开为 `uint8` 0/255 像素。
 - `dvd_disc.plan_output(options, data_dir=None, file_position="inner", volume_label="DVD_IMAGE", bleed=1)` 返回 `OutputPlan`，统一持有完整几何、输出扇区数、UDF 布局及绘图区。ISO 和蒙版均使用这一计划。
@@ -475,7 +489,7 @@ outer：盘首元数据 → 对齐填充 → 绘图 → 目录与文件 → 盘�
 直接构造 profile 或调用原生接口时，由调用者保证以下布局和数值关系，程序不额外检查：
 
 - 黑白及灰度图片总数为 `Ng`、彩色图片数为 `Nc`，`N = Ng + Nc`。未合并时 `1 <= N <= 8`、载波平面数 `C = Ng + 3*Nc`；标准合并时 `1 <= N <= 6`、`C=6`；加宽合并时 `1 <= N <= 9`、`C=9`。源图模式、路径、各平面所属图片和通道与数组一致；`carrier_frames` 始终记录实际源图索引，合并时光学组由 `plane//3` 给出，`target_u` 和 `viewing_poses` 按光学组排列。
-- 数组均为 NumPy C 连续布局：`field` 为 `(C, 8192, 8192)` 的 `uint8`；`levels` 为 `(C, 256)` 的 `float32`，按源图模式选择灰度 `(g/255) × gain` 或线性 RGB 乘增益，值为 `[0, 1]` 内有限数；合并时 `channel` 为 R/G/B 不改变源图模式。
+- 数组均为 NumPy C 连续布局：`field` 为 `(C, 8192, 8192)` 的 `uint8`；`levels` 为 `(C, 256)` 的 `float32`，按源图模式选择灰度 `(g/255) × gain` 或线性 RGB 乘增益，值为 `[0, 1]` 内有限数；`no_gain=True` 时所有 `gain` 为 1。合并时 `channel` 为 R/G/B 不改变源图模式。
 - 全部变体字符串总数为 `V`。`carrier_bytes` 为 `(V, 91)` 的 `uint8`，`trim` 为 `(V, 92)` 的 `uint8`，按载波组紧凑排列；`variant_offsets` 为 `(C,)` 的 `int64`，记录各组在字节串表中的起点。每组变体 0 为名义串。
 - `variant_map` 为 `(C, H, W)` 的 `uint8` 位置索引；未启用补偿时为 `(C, 0, 0)`。`variant_periods` 为 `(V,)` 的 `float64`，记录每个变体的请求周期。各组变体数不超过 256。
 - `sampling_modes` 为 `(C,)` 的 `int64`：0 表示彩色双线性，1 表示 1 位黑白格式最近邻，2 表示灰度双线性。模式 0、2 使用相同的插值及最近偶数取整规则；元数据的 `color-bilinear`、`gray-binary-nearest`、`gray-bilinear` 分别对应模式 0、1、2。
@@ -500,7 +514,7 @@ outer：盘首元数据 → 对齐填充 → 绘图 → 目录与文件 → 盘�
 
 | 项目 | DiscDiffractStudio | 本项目 |
 |---|---|---|
-| 灰度响应与轨道分配 | 常规素材转换为线性亮度；默认按圈分配，也支持按单元分配 | 灰度直接使用 `g/255` 乘载波增益，不做灰度 gamma 转换；固定按圈排程 |
+| 灰度响应与轨道分配 | 常规素材转换为线性亮度；默认按圈分配，也支持按单元分配 | 灰度直接使用 `g/255` 乘载波增益，不做灰度 gamma 转换；`--no-gain` 可将所有增益固定为 1，仍保留原圈份额和固定按圈排程 |
 | 图片布局与共有内容 | 以对象、帧及掩模组织盘面内容，按对象网格采样 | 完整 PNG 直接采样原像素；未合并最多 8 张，标准合并最多 6 张，加宽合并最多 9 张；不做对象布局，不识别或合并共有区域，也不按共有内容重分配轨道 |
 | 彩色通道 | `colorflip` 保留两帧 RGB，多帧彩色动画按载波位置抽取素材的颜色通道，宽方案可至 9 张 | 默认每张彩色输入保留完整 RGB；所有彩色通道采用与灰度相同的双线性插值及取整，再线性化；指定 `--color-range` 时必须选择 `standard`（标准六载波／1–6 张）或 `wide`（加宽九载波／1–9 张），启用源通道抽取及三元组白平衡；灰度素材保留本项目采样和 `g/255` 响应 |
 | 载波与观看姿态 | 可合成载波并为对象选取位置、姿态相关的周期变体 | 周期补偿默认关闭；在观看 JSON 中设置 `chirp:true` 后，字符串方案按实际或规范灯眼姿态准备位置周期变体，使用共享周期网格及进程内缓存；默认 `92/B9` 单字节方案不补偿；支持 `--viewing` 指定几何、角度或 `u` |

@@ -53,7 +53,7 @@ class _Source:
     pixels: np.ndarray | None = None
 
 
-def _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range):
+def _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range, no_gain):
     """Build every profile through one carrier plan and one streaming assembler."""
     global _RESOURCE
     if viewing is None and _RESOURCE is None:
@@ -204,6 +204,8 @@ def _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range):
         variant_map = np.empty((carrier_count, 0, 0), dtype=np.uint8)
         variant_periods = np.asarray(nominal_periods, dtype=np.float64)
         viewing_poses = None
+    if no_gain:
+        gains = (1.0,) * carrier_count
     gray = np.arange(256, dtype=np.uint8).astype(np.float32) / np.float32(255.0)
     linear = np.where(gray <= np.float32(0.04045), gray / np.float32(12.92),
                       ((gray + np.float32(0.055)) / np.float32(1.055)) ** np.float32(2.4))
@@ -252,7 +254,7 @@ def _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range):
 
 
 def prepare_images(images, *, source_paths=None, viewing=None, channel_bit_nm=133.3,
-                   radii_mm=(24.0, 58.0), color_range=None):
+                   radii_mm=(24.0, 58.0), color_range=None, no_gain=False):
     """Prepare bool black/white, uint8 grayscale or uint8 RGB arrays by format."""
     images = tuple(images)
     paths = ("<memory>",) * len(images) if source_paths is None else tuple(source_paths)
@@ -260,11 +262,11 @@ def prepare_images(images, *, source_paths=None, viewing=None, channel_bit_nm=13
                             "color" if image.ndim == 3 else
                             "monochrome" if image.dtype == np.bool_ else "grayscale", image)
                     for index, image in enumerate(images))
-    return _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range)
+    return _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range, no_gain)
 
 
 def prepare_multiview(input_paths, *, viewing=None, channel_bit_nm=133.3,
-                      radii_mm=(24.0, 58.0), color_range=None):
+                      radii_mm=(24.0, 58.0), color_range=None, no_gain=False):
     """Read headers, then decode one PNG at a time into the common carrier planes.
 
     PNG mode 1 selects nearest sampling; grayscale and RGB planes use bilinear.
@@ -278,4 +280,4 @@ def prepare_multiview(input_paths, *, viewing=None, channel_bit_nm=133.3,
                     "grayscale" if image.mode in ("L", "LA", "I", "F")
                     or image.mode.startswith("I;16") else "color")
         sources.append(_Source(str(path), mode))
-    return _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range)
+    return _prepare_sources(sources, viewing, channel_bit_nm, radii_mm, color_range, no_gain)
